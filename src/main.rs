@@ -1,49 +1,534 @@
 use bevy::prelude::*;
 
-#[derive(Component)]
-struct Person;
-#[derive(Component)]
-struct Name(String);
+#[derive(Resource)]
+struct TetrisRuleset {
+    well_size_rows: u32,
+    well_size_cols: u32,
+    initial_speed: f32,
+}
 
 #[derive(Resource)]
-struct GreetTimer(Timer);
-
-fn add_people(mut commands: Commands) {
-    commands.spawn((Person, Name("Janusz Korwin-Mikke".to_string())));
-    commands.spawn((Person, Name("Sławomir Mentzen".to_string())));
-    commands.spawn((Person, Name("Roman Giertych".to_string())));
+struct GameState {
+    occupied: Vec<u8>,
+    cols: u32,
+    points: usize,
 }
 
-fn greet_people(time: Res<Time>, mut timer: ResMut<GreetTimer>, query: Query<&Name, With<Person>>) {
+#[derive(Event)]
+struct BlockPlaced;
+
+impl GameState {
+    fn new(rows: u32, cols: u32) -> Self {
+        Self {
+            occupied: vec![0; (rows * cols) as usize],
+            cols,
+            points: 0,
+        }
+    }
+
+    fn place_block(&mut self, pos: TetrisPos) {
+        self.occupied[(pos.1 * self.cols + pos.0) as usize] = 1;
+    }
+
+    fn colliding(&self, pos: TetrisPos) -> bool {
+        self.occupied[(pos.1 * self.cols + pos.0) as usize] == 1
+    }
+
+    fn full_lines(&self) -> Vec<u32> {
+        let rows = self.occupied.len() as u32 / self.cols;
+
+        let mut full_lines = vec![];
+        for y in 0..rows {
+            let is_full = !self.occupied[(y * self.cols) as usize..]
+                .iter()
+                .take(self.cols as usize)
+                .any(|v| *v == 0);
+
+            if is_full {
+                full_lines.push(y);
+            }
+        }
+
+        full_lines
+    }
+
+    fn clear_lines(&mut self) {
+        let rows = self.occupied.len() as u32 / self.cols;
+        let full_lines = self.full_lines();
+
+        for y_line in full_lines {
+            for y_up in y_line + 1..rows {
+                for x in 0..self.cols {
+                    self.occupied[((y_up - 1) * self.cols + x) as usize] =
+                        self.occupied[(y_up * self.cols + x) as usize];
+                }
+            }
+        }
+    }
+
+    fn should_rest(&self, pos: &TetrisPos) -> bool {
+        pos.1 == 0 || self.occupied[(((pos.1 - 1) * self.cols) + pos.0) as usize] == 1
+    }
+}
+
+#[derive(Resource)]
+struct BlockAssets {
+    mesh: Handle<Mesh>,
+    material_t: Handle<StandardMaterial>,
+}
+
+#[derive(Resource)]
+struct GravityTimer(Timer);
+
+#[derive(Resource)]
+struct SpawnTimer(Timer);
+
+#[derive(Component)]
+struct PlayArea;
+
+#[derive(Component)]
+struct Block;
+
+#[derive(Component, Clone, Copy)]
+struct TetrisPos(u32, u32);
+
+#[derive(Component)]
+struct Current;
+
+impl TetrisRuleset {
+    fn new(well_size_rows: u32, well_size_cols: u32, initial_speed: f32) -> Self {
+        Self {
+            well_size_rows,
+            well_size_cols,
+            initial_speed,
+        }
+    }
+}
+
+impl Default for TetrisRuleset {
+    fn default() -> Self {
+        TetrisRuleset::new(20, 10, 0.2)
+    }
+}
+
+fn apply_transform(
+    bounds: (f32, f32),
+    offset: (f32, f32),
+    rows: u32,
+    cols: u32,
+    pos: TetrisPos,
+    transform: &mut Transform,
+) {
+    let x_step = bounds.0 / cols as f32;
+    let y_step = bounds.1 / rows as f32;
+
+    let left_s = offset.0 - bounds.0 / 2.0;
+    let bottom_s = offset.1 - bounds.1 / 2.0;
+
+    transform.translation.x = left_s + (pos.0 as f32) * x_step;
+    transform.translation.y = bottom_s + (pos.1 as f32) * y_step;
+    transform.translation.z = -1.0;
+}
+
+fn setup_game_area(
+    mut commands: Commands,
+    ruleset: Res<TetrisRuleset>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let aspect_ratio = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
+
+    let bound_x = 0.33;
+    let bound_y = 0.33 / aspect_ratio;
+
+    let bottom_wall = meshes.add(Cuboid::new(bound_x + 0.01, 0.01, 0.11));
+    let side_wall = meshes.add(Cuboid::new(0.01, bound_y + 0.01, 0.11));
+    let back_wall = meshes.add(Cuboid::new(bound_x + 0.01, bound_y + 0.03, 0.01));
+
+    let white_material = materials.add(StandardMaterial::from_color(Color::WHITE));
+
+    let block_mesh = meshes.add(Cuboid::new(
+        0.33 / ruleset.well_size_cols as f32,
+        0.33 / ruleset.well_size_cols as f32,
+        0.1,
+    ));
+
+    commands.spawn((
+        PlayArea,
+        Transform::from_xyz(0.0, 0.0, -1.0),
+        Visibility::default(),
+        children![
+            (
+                Mesh3d(side_wall.clone()),
+                MeshMaterial3d(white_material.clone()),
+                Transform::from_xyz(-bound_x / 2.0, 0.0, 0.0)
+            ),
+            (
+                Mesh3d(side_wall.clone()),
+                MeshMaterial3d(white_material.clone()),
+                Transform::from_xyz(bound_x / 2.0, 0.0, 0.0)
+            ),
+            (
+                Mesh3d(back_wall),
+                MeshMaterial3d(white_material.clone()),
+                Transform::from_xyz(0.0, 0.0, -0.09)
+            ),
+            (
+                Mesh3d(bottom_wall),
+                MeshMaterial3d(white_material),
+                Transform::from_xyz(0.0, -bound_y / 2.0 - 0.01, 0.0)
+            )
+        ],
+    ));
+
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(0.0, 0.0, 0.0).looking_at(-Vec3::Z, Vec3::Y),
+    ));
+
+    commands.insert_resource(GravityTimer(Timer::from_seconds(
+        ruleset.initial_speed,
+        TimerMode::Repeating,
+    )));
+
+    commands.insert_resource(SpawnTimer(Timer::from_seconds(
+        ruleset.initial_speed,
+        TimerMode::Repeating,
+    )));
+
+    let orange_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        252.0, 160.0, 2.0,
+    )));
+
+    commands.spawn((
+        Current,
+        Block,
+        TetrisPos(4, 19),
+        Mesh3d(block_mesh.clone()),
+        MeshMaterial3d(orange_material.clone()),
+        {
+            let mut transform = Transform::IDENTITY;
+            apply_transform(
+                (bound_x, bound_y),
+                (0.0, 0.0),
+                ruleset.well_size_rows,
+                ruleset.well_size_cols,
+                TetrisPos(4, 19),
+                &mut transform,
+            );
+            transform
+        },
+    ));
+
+    commands.spawn((
+        Current,
+        Block,
+        TetrisPos(3, 18),
+        Mesh3d(block_mesh.clone()),
+        MeshMaterial3d(orange_material.clone()),
+        {
+            let mut transform = Transform::IDENTITY;
+            apply_transform(
+                (bound_x, bound_y),
+                (0.0, 0.0),
+                ruleset.well_size_rows,
+                ruleset.well_size_cols,
+                TetrisPos(3, 18),
+                &mut transform,
+            );
+            transform
+        },
+    ));
+
+    commands.spawn((
+        Current,
+        Block,
+        TetrisPos(4, 18),
+        Mesh3d(block_mesh.clone()),
+        MeshMaterial3d(orange_material.clone()),
+        {
+            let mut transform = Transform::IDENTITY;
+            apply_transform(
+                (bound_x, bound_y),
+                (0.0, 0.0),
+                ruleset.well_size_rows,
+                ruleset.well_size_cols,
+                TetrisPos(4, 18),
+                &mut transform,
+            );
+            transform
+        },
+    ));
+
+    commands.spawn((
+        Current,
+        Block,
+        TetrisPos(5, 18),
+        Mesh3d(block_mesh.clone()),
+        MeshMaterial3d(orange_material.clone()),
+        {
+            let mut transform = Transform::IDENTITY;
+            apply_transform(
+                (bound_x, bound_y),
+                (0.0, 0.0),
+                ruleset.well_size_rows,
+                ruleset.well_size_cols,
+                TetrisPos(5, 18),
+                &mut transform,
+            );
+            transform
+        },
+    ));
+
+    commands.insert_resource(BlockAssets {
+        mesh: block_mesh,
+        material_t: orange_material,
+    });
+
+    commands.insert_resource(GameState::new(
+        ruleset.well_size_rows,
+        ruleset.well_size_cols,
+    ));
+}
+
+fn gravity_system(
+    mut timer: ResMut<GravityTimer>,
+    mut commands: Commands,
+    time: Res<Time>,
+    mut state: ResMut<GameState>,
+    query: Query<(Entity, &mut TetrisPos, &mut Transform), (With<Current>, With<Block>)>,
+) {
     if timer.0.tick(time.delta()).just_finished() {
-        for name in &query {
-            println!("hello {}", name.0);
+        let should_rest = query.iter().any(|(_, pos, _)| state.should_rest(pos));
+
+        if should_rest {
+            for (entity, pos, _) in query {
+                commands.entity(entity).remove::<Current>();
+                commands.trigger(BlockPlaced);
+                state.place_block(*pos);
+            }
+        } else {
+            for (_, mut pos, mut transform) in query {
+                pos.1 = pos.1.saturating_sub(1);
+                apply_transform(
+                    (0.33, 0.66),
+                    (0.0, 0.0),
+                    20,
+                    10,
+                    *pos.as_mut(),
+                    transform.as_mut(),
+                );
+            }
         }
     }
 }
 
-fn update_people(mut query: Query<&mut Name, With<Person>>) {
-    for mut name in &mut query {
-        if name.0 == "Sławomir Mentzen" {
-            name.0 = "Konrad Berkowicz".into();
-            break;
+fn spawn_new_piece(
+    query: Query<&Current>,
+    ruleset: Res<TetrisRuleset>,
+    assets: Res<BlockAssets>,
+    time: Res<Time>,
+    mut spawn_timer: ResMut<SpawnTimer>,
+    mut gravity_timer: ResMut<GravityTimer>,
+    mut commands: Commands,
+) {
+    if query.is_empty() && spawn_timer.0.tick(time.delta()).just_finished() {
+        let aspect_ratio: f32 = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
+
+        let bound_x = 0.33;
+        let bound_y = 0.33 / aspect_ratio;
+
+        let block_mesh = assets.mesh.clone();
+        let orange_material: Handle<StandardMaterial> = assets.material_t.clone();
+        commands.spawn((
+            Current,
+            Block,
+            TetrisPos(4, 19),
+            Mesh3d(block_mesh.clone()),
+            MeshMaterial3d(orange_material.clone()),
+            {
+                let mut transform = Transform::IDENTITY;
+                apply_transform(
+                    (bound_x, bound_y),
+                    (0.0, 0.0),
+                    ruleset.well_size_rows,
+                    ruleset.well_size_cols,
+                    TetrisPos(4, 19),
+                    &mut transform,
+                );
+                transform
+            },
+        ));
+
+        commands.spawn((
+            Current,
+            Block,
+            TetrisPos(3, 18),
+            Mesh3d(block_mesh.clone()),
+            MeshMaterial3d(orange_material.clone()),
+            {
+                let mut transform = Transform::IDENTITY;
+                apply_transform(
+                    (bound_x, bound_y),
+                    (0.0, 0.0),
+                    ruleset.well_size_rows,
+                    ruleset.well_size_cols,
+                    TetrisPos(3, 18),
+                    &mut transform,
+                );
+                transform
+            },
+        ));
+
+        commands.spawn((
+            Current,
+            Block,
+            TetrisPos(4, 18),
+            Mesh3d(block_mesh.clone()),
+            MeshMaterial3d(orange_material.clone()),
+            {
+                let mut transform = Transform::IDENTITY;
+                apply_transform(
+                    (bound_x, bound_y),
+                    (0.0, 0.0),
+                    ruleset.well_size_rows,
+                    ruleset.well_size_cols,
+                    TetrisPos(4, 18),
+                    &mut transform,
+                );
+                transform
+            },
+        ));
+
+        commands.spawn((
+            Current,
+            Block,
+            TetrisPos(5, 18),
+            Mesh3d(block_mesh.clone()),
+            MeshMaterial3d(orange_material.clone()),
+            {
+                let mut transform = Transform::IDENTITY;
+                apply_transform(
+                    (bound_x, bound_y),
+                    (0.0, 0.0),
+                    ruleset.well_size_rows,
+                    ruleset.well_size_cols,
+                    TetrisPos(5, 18),
+                    &mut transform,
+                );
+                transform
+            },
+        ));
+
+        gravity_timer.0.reset();
+    }
+}
+
+fn controls(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    ruleset: Res<TetrisRuleset>,
+    state: Res<GameState>,
+    query: Query<(&mut TetrisPos, &mut Transform), (With<Current>, With<Block>)>,
+) {
+    let aspect_ratio: f32 = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
+
+    let bound_x = 0.33;
+    let bound_y = 0.33 / aspect_ratio;
+
+    if keyboard.just_pressed(KeyCode::KeyA) {
+        let not_hitting_wall = query.iter().all(|(pos, _)| pos.0 > 0);
+
+        if not_hitting_wall {
+            let not_colliding = !query
+                .iter()
+                .any(|(pos, _)| state.colliding(TetrisPos(pos.0 - 1, pos.1)));
+
+            if not_colliding {
+                for (mut pos, mut transform) in query {
+                    pos.0 -= 1;
+                    apply_transform(
+                        (bound_x, bound_y),
+                        (0.0, 0.0),
+                        ruleset.well_size_rows,
+                        ruleset.well_size_cols,
+                        *pos,
+                        transform.as_mut(),
+                    );
+                }
+            }
+        }
+    } else if keyboard.just_pressed(KeyCode::KeyD) {
+        let not_hitting_wall = !query
+            .iter()
+            .any(|(pos, _)| pos.0 == ruleset.well_size_cols - 1);
+
+        if not_hitting_wall {
+            let not_colliding = !query
+                .iter()
+                .any(|(pos, _)| state.colliding(TetrisPos(pos.0 + 1, pos.1)));
+
+            if not_colliding {
+                for (mut pos, mut transform) in query {
+                    pos.0 += 1;
+                    apply_transform(
+                        (bound_x, bound_y),
+                        (0.0, 0.0),
+                        ruleset.well_size_rows,
+                        ruleset.well_size_cols,
+                        *pos,
+                        transform.as_mut(),
+                    );
+                }
+            }
         }
     }
 }
 
-pub struct HelloPlugin;
+fn clear_lines(
+    _event: On<BlockPlaced>,
+    ruleset: Res<TetrisRuleset>,
+    mut state: ResMut<GameState>,
+    mut tiles: Query<(Entity, &mut TetrisPos, &mut Transform), (With<Block>, Without<Current>)>,
+    mut commands: Commands,
+) {
+    let crash_lines = state.full_lines();
 
-impl Plugin for HelloPlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(GreetTimer(Timer::from_seconds(2.0, TimerMode::Repeating)))
-            .add_systems(Startup, add_people)
-            .add_systems(Update, (update_people, greet_people).chain());
+    for (entity, mut pos, mut transform) in tiles.iter_mut() {
+        if crash_lines.contains(&pos.1) {
+            commands.entity(entity).despawn();
+        } else {
+            let aspect_ratio = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
+
+            let bound_x = 0.33;
+            let bound_y = 0.33 / aspect_ratio;
+
+            let y = pos.1;
+            let should_fall = crash_lines.iter().any(|crash_y| *crash_y < y);
+
+            if should_fall {
+                pos.1 = pos.1.saturating_sub(1);
+                apply_transform(
+                    (bound_x, bound_y),
+                    (0.0, 0.0),
+                    ruleset.well_size_rows,
+                    ruleset.well_size_cols,
+                    *pos,
+                    transform.as_mut(),
+                );
+            }
+        }
     }
+
+    state.clear_lines();
 }
 
 fn main() {
     App::new()
+        .insert_resource(TetrisRuleset::default())
         .add_plugins(DefaultPlugins)
-        .add_plugins(HelloPlugin)
+        .add_systems(Startup, setup_game_area)
+        .add_systems(Update, controls)
+        .add_systems(Update, (spawn_new_piece, gravity_system).chain())
+        .add_observer(clear_lines)
         .run();
 }

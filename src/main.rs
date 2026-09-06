@@ -119,14 +119,17 @@ fn apply_transform(
     pos: TetrisPos,
     transform: &mut Transform,
 ) {
+    let x_len = 0.33 / cols as f32;
+    let y_len = 0.33 / cols as f32;
+
     let x_step = bounds.0 / cols as f32;
     let y_step = bounds.1 / rows as f32;
 
     let left_s = offset.0 - bounds.0 / 2.0;
     let bottom_s = offset.1 - bounds.1 / 2.0;
 
-    transform.translation.x = left_s + (pos.0 as f32) * x_step;
-    transform.translation.y = bottom_s + (pos.1 as f32) * y_step;
+    transform.translation.x = left_s + (pos.0 as f32) * x_step + x_len / 2.0;
+    transform.translation.y = bottom_s + (pos.1 as f32) * y_step + y_len / 2.0;
     transform.translation.z = -1.0;
 }
 
@@ -141,9 +144,9 @@ fn setup_game_area(
     let bound_x = 0.33;
     let bound_y = 0.33 / aspect_ratio;
 
-    let bottom_wall = meshes.add(Cuboid::new(bound_x + 0.01, 0.01, 0.11));
+    let bottom_wall = meshes.add(Cuboid::new(bound_x + 0.02, 0.01, 0.11));
     let side_wall = meshes.add(Cuboid::new(0.01, bound_y + 0.01, 0.11));
-    let back_wall = meshes.add(Cuboid::new(bound_x + 0.01, bound_y + 0.03, 0.01));
+    let back_wall = meshes.add(Cuboid::new(bound_x, bound_y, 0.01));
 
     let white_material = materials.add(StandardMaterial::from_color(Color::WHITE));
 
@@ -161,30 +164,27 @@ fn setup_game_area(
             (
                 Mesh3d(side_wall.clone()),
                 MeshMaterial3d(white_material.clone()),
-                Transform::from_xyz(-bound_x / 2.0, 0.0, 0.0)
+                Transform::from_xyz(-bound_x / 2.0 - 0.01 / 2.0, 0.0, 0.0)
             ),
             (
                 Mesh3d(side_wall.clone()),
                 MeshMaterial3d(white_material.clone()),
-                Transform::from_xyz(bound_x / 2.0, 0.0, 0.0)
+                Transform::from_xyz(bound_x / 2.0 + 0.01, 0.0, 0.0)
             ),
             (
                 Mesh3d(back_wall),
                 MeshMaterial3d(white_material.clone()),
-                Transform::from_xyz(0.0, 0.0, -0.09)
+                Transform::from_xyz(0.0, 0.0, 0.0)
             ),
             (
                 Mesh3d(bottom_wall),
                 MeshMaterial3d(white_material),
-                Transform::from_xyz(0.0, -bound_y / 2.0 - 0.01, 0.0)
+                Transform::from_xyz(0.0, -bound_y / 2.0, 0.0)
             )
         ],
     ));
 
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 0.0, 0.0).looking_at(-Vec3::Z, Vec3::Y),
-    ));
+    commands.spawn((Camera3d::default(), Transform::from_xyz(0.0, 0.0, 0.0)));
 
     commands.insert_resource(GravityTimer(Timer::from_seconds(
         ruleset.initial_speed,

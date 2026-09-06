@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+#[derive(Component)]
+struct PointsText;
+
 #[derive(Resource)]
 struct TetrisRuleset {
     well_size_rows: u32,
@@ -133,6 +136,21 @@ fn apply_transform(
     transform.translation.z = -1.0;
 }
 
+fn setup_ui(mut commands: Commands) {
+    commands.spawn((
+        PointsText,
+        Text::new("Points: 0"),
+        TextShadow::default(),
+        TextLayout::justify(Justify::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(10),
+            right: px(10),
+            ..default()
+        },
+    ));
+}
+
 fn setup_game_area(
     mut commands: Commands,
     ruleset: Res<TetrisRuleset>,
@@ -184,7 +202,11 @@ fn setup_game_area(
         ],
     ));
 
-    commands.spawn((Camera3d::default(), Transform::from_xyz(0.0, 0.0, 0.0)));
+    commands.spawn((
+        Camera3d::default(),
+        // Projection::from(OrthographicProjection::default_3d()),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
 
     commands.insert_resource(GravityTimer(Timer::from_seconds(
         ruleset.initial_speed,
@@ -304,9 +326,9 @@ fn gravity_system(
         if should_rest {
             for (entity, pos, _) in query {
                 commands.entity(entity).remove::<Current>();
-                commands.trigger(BlockPlaced);
                 state.place_block(*pos);
             }
+            commands.trigger(BlockPlaced);
         } else {
             for (_, mut pos, mut transform) in query {
                 pos.1 = pos.1.saturating_sub(1);
@@ -484,6 +506,8 @@ fn controls(
     }
 }
 
+const POINTS_PER_CLEAR: usize = 100;
+
 fn clear_lines(
     _event: On<BlockPlaced>,
     ruleset: Res<TetrisRuleset>,
@@ -492,6 +516,7 @@ fn clear_lines(
     mut commands: Commands,
 ) {
     let crash_lines = state.full_lines();
+    state.points += crash_lines.len() * POINTS_PER_CLEAR;
 
     for (entity, mut pos, mut transform) in tiles.iter_mut() {
         if crash_lines.contains(&pos.1) {
@@ -522,13 +547,21 @@ fn clear_lines(
     state.clear_lines();
 }
 
+fn update_ui(mut pts_text: Query<&mut Text, With<PointsText>>, state: Res<GameState>) {
+    let mut pts_text = pts_text.single_mut().unwrap();
+    pts_text.0 = format!("Points: {}", state.points);
+}
+
 fn main() {
     App::new()
         .insert_resource(TetrisRuleset::default())
         .add_plugins(DefaultPlugins)
-        .add_systems(Startup, setup_game_area)
+        .add_systems(Startup, (setup_game_area, setup_ui))
         .add_systems(Update, controls)
-        .add_systems(Update, (spawn_new_piece, gravity_system).chain())
+        .add_systems(
+            Update,
+            (update_ui, (spawn_new_piece, gravity_system).chain()),
+        )
         .add_observer(clear_lines)
         .run();
 }

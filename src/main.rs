@@ -1,3 +1,4 @@
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 #[derive(Component)]
@@ -15,6 +16,162 @@ struct GameState {
     occupied: Vec<u8>,
     cols: u32,
     points: usize,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TetrominoShape {
+    Square,
+    Stick,
+    InverseHook, // J
+    Hook,        // L
+    InverseSkew, // S
+    Skew,        // Z
+    Arrow,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+enum TetrominoColor {
+    Orange,
+    Blue,
+    Cyan,
+    Yellow,
+    Green,
+    Magenta,
+    Red,
+}
+
+impl TetrominoShape {
+    fn to_color(&self) -> TetrominoColor {
+        match self {
+            TetrominoShape::Arrow => TetrominoColor::Magenta,
+            TetrominoShape::Square => TetrominoColor::Yellow,
+            TetrominoShape::Stick => TetrominoColor::Cyan,
+            TetrominoShape::InverseSkew => TetrominoColor::Green,
+            TetrominoShape::Skew => TetrominoColor::Red,
+            TetrominoShape::Hook => TetrominoColor::Orange,
+            TetrominoShape::InverseHook => TetrominoColor::Blue,
+        }
+    }
+
+    fn spawn_new(
+        &self,
+        commands: &mut Commands,
+        block_mesh: Handle<Mesh>,
+        block_material: Handle<StandardMaterial>,
+        ruleset: &TetrisRuleset,
+    ) {
+        let aspect_ratio = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
+
+        let bound_x = 0.33;
+        let bound_y = 0.33 / aspect_ratio;
+
+        match self {
+            TetrominoShape::Stick => {
+                for (current, pos) in [
+                    (Current(1), TetrisPos(3, 19)),
+                    (Current(2), TetrisPos(4, 19)),
+                    (Current(3), TetrisPos(5, 19)),
+                    (Current(4), TetrisPos(6, 19)),
+                ] {
+                    commands.spawn((
+                        current,
+                        pos,
+                        Block,
+                        Mesh3d(block_mesh.clone()),
+                        MeshMaterial3d(block_material.clone()),
+                        {
+                            let mut transform = Transform::IDENTITY;
+                            apply_transform(
+                                (bound_x, bound_y),
+                                (0.0, 0.0),
+                                ruleset.well_size_rows,
+                                ruleset.well_size_cols,
+                                pos,
+                                &mut transform,
+                            );
+                            transform
+                        },
+                    ));
+                }
+            }
+            _ => {
+                for (current, pos) in [
+                    (Current(1), TetrisPos(4, 19)),
+                    (Current(2), TetrisPos(3, 18)),
+                    (Current(3), TetrisPos(4, 18)),
+                    (Current(4), TetrisPos(5, 18)),
+                ] {
+                    commands.spawn((
+                        current,
+                        pos,
+                        Block,
+                        Mesh3d(block_mesh.clone()),
+                        MeshMaterial3d(block_material.clone()),
+                        {
+                            let mut transform = Transform::IDENTITY;
+                            apply_transform(
+                                (bound_x, bound_y),
+                                (0.0, 0.0),
+                                ruleset.well_size_rows,
+                                ruleset.well_size_cols,
+                                pos,
+                                &mut transform,
+                            );
+                            transform
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    #[rustfmt::skip]
+    fn to_map(&self) -> [u8; 16] {
+        match self {
+            TetrominoShape::Square => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                1, 2, 0, 0,
+                3, 4, 0, 0,
+            ],
+            TetrominoShape::Arrow => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 1, 0, 0,
+                2, 3, 4, 0,
+            ],
+            TetrominoShape::Hook => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 1, 0,
+                2, 3, 4, 0
+            ],
+            TetrominoShape::InverseHook => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                1, 0, 0, 0,
+                2, 3, 4, 0
+            ],
+            TetrominoShape::Skew => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                1, 2, 0, 0,
+                0, 3, 4, 0
+            ],
+            TetrominoShape::InverseSkew => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 1, 2, 0,
+                3, 4, 0, 0
+            ],
+            TetrominoShape::Stick => [
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                1, 2, 3, 4
+            ]
+        }
+    }
 }
 
 #[derive(Event)]
@@ -77,7 +234,13 @@ impl GameState {
 #[derive(Resource)]
 struct BlockAssets {
     mesh: Handle<Mesh>,
-    material_t: Handle<StandardMaterial>,
+    materials: HashMap<TetrominoColor, Handle<StandardMaterial>>,
+}
+
+impl BlockAssets {
+    fn get_material(&self, shape: TetrominoShape) -> Handle<StandardMaterial> {
+        self.materials[&shape.to_color()].clone()
+    }
 }
 
 #[derive(Resource)]
@@ -96,7 +259,7 @@ struct Block;
 struct TetrisPos(u32, u32);
 
 #[derive(Component)]
-struct Current;
+struct Current(u8);
 
 impl TetrisRuleset {
     fn new(well_size_rows: u32, well_size_cols: u32, initial_speed: f32) -> Self {
@@ -222,89 +385,30 @@ fn setup_game_area(
         252.0, 160.0, 2.0,
     )));
 
-    commands.spawn((
-        Current,
-        Block,
-        TetrisPos(4, 19),
-        Mesh3d(block_mesh.clone()),
-        MeshMaterial3d(orange_material.clone()),
-        {
-            let mut transform = Transform::IDENTITY;
-            apply_transform(
-                (bound_x, bound_y),
-                (0.0, 0.0),
-                ruleset.well_size_rows,
-                ruleset.well_size_cols,
-                TetrisPos(4, 19),
-                &mut transform,
-            );
-            transform
-        },
-    ));
+    TetrominoShape::Arrow.spawn_new(
+        &mut commands,
+        block_mesh.clone(),
+        orange_material.clone(),
+        ruleset.as_ref(),
+    );
 
-    commands.spawn((
-        Current,
-        Block,
-        TetrisPos(3, 18),
-        Mesh3d(block_mesh.clone()),
-        MeshMaterial3d(orange_material.clone()),
-        {
-            let mut transform = Transform::IDENTITY;
-            apply_transform(
-                (bound_x, bound_y),
-                (0.0, 0.0),
-                ruleset.well_size_rows,
-                ruleset.well_size_cols,
-                TetrisPos(3, 18),
-                &mut transform,
-            );
-            transform
-        },
-    ));
-
-    commands.spawn((
-        Current,
-        Block,
-        TetrisPos(4, 18),
-        Mesh3d(block_mesh.clone()),
-        MeshMaterial3d(orange_material.clone()),
-        {
-            let mut transform = Transform::IDENTITY;
-            apply_transform(
-                (bound_x, bound_y),
-                (0.0, 0.0),
-                ruleset.well_size_rows,
-                ruleset.well_size_cols,
-                TetrisPos(4, 18),
-                &mut transform,
-            );
-            transform
-        },
-    ));
-
-    commands.spawn((
-        Current,
-        Block,
-        TetrisPos(5, 18),
-        Mesh3d(block_mesh.clone()),
-        MeshMaterial3d(orange_material.clone()),
-        {
-            let mut transform = Transform::IDENTITY;
-            apply_transform(
-                (bound_x, bound_y),
-                (0.0, 0.0),
-                ruleset.well_size_rows,
-                ruleset.well_size_cols,
-                TetrisPos(5, 18),
-                &mut transform,
-            );
-            transform
-        },
-    ));
+    // todo: define all materials instead of having just one
+    let materials_map = HashMap::from_iter(
+        [
+            (TetrominoColor::Blue, orange_material.clone()),
+            (TetrominoColor::Cyan, orange_material.clone()),
+            (TetrominoColor::Green, orange_material.clone()),
+            (TetrominoColor::Magenta, orange_material.clone()),
+            (TetrominoColor::Orange, orange_material.clone()),
+            (TetrominoColor::Red, orange_material.clone()),
+            (TetrominoColor::Yellow, orange_material.clone()),
+        ]
+        .into_iter(),
+    );
 
     commands.insert_resource(BlockAssets {
         mesh: block_mesh,
-        material_t: orange_material,
+        materials: materials_map,
     });
 
     commands.insert_resource(GameState::new(
@@ -355,92 +459,18 @@ fn spawn_new_piece(
     mut commands: Commands,
 ) {
     if query.is_empty() && spawn_timer.0.tick(time.delta()).just_finished() {
-        let aspect_ratio: f32 = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
-
-        let bound_x = 0.33;
-        let bound_y = 0.33 / aspect_ratio;
-
         let block_mesh = assets.mesh.clone();
-        let orange_material: Handle<StandardMaterial> = assets.material_t.clone();
-        commands.spawn((
-            Current,
-            Block,
-            TetrisPos(4, 19),
-            Mesh3d(block_mesh.clone()),
-            MeshMaterial3d(orange_material.clone()),
-            {
-                let mut transform = Transform::IDENTITY;
-                apply_transform(
-                    (bound_x, bound_y),
-                    (0.0, 0.0),
-                    ruleset.well_size_rows,
-                    ruleset.well_size_cols,
-                    TetrisPos(4, 19),
-                    &mut transform,
-                );
-                transform
-            },
-        ));
+        let block_material: Handle<StandardMaterial> = assets.get_material(TetrominoShape::Arrow);
+        use rand::prelude::*;
 
-        commands.spawn((
-            Current,
-            Block,
-            TetrisPos(3, 18),
-            Mesh3d(block_mesh.clone()),
-            MeshMaterial3d(orange_material.clone()),
-            {
-                let mut transform = Transform::IDENTITY;
-                apply_transform(
-                    (bound_x, bound_y),
-                    (0.0, 0.0),
-                    ruleset.well_size_rows,
-                    ruleset.well_size_cols,
-                    TetrisPos(3, 18),
-                    &mut transform,
-                );
-                transform
-            },
-        ));
+        let mut prng = rand::rng();
 
-        commands.spawn((
-            Current,
-            Block,
-            TetrisPos(4, 18),
-            Mesh3d(block_mesh.clone()),
-            MeshMaterial3d(orange_material.clone()),
-            {
-                let mut transform = Transform::IDENTITY;
-                apply_transform(
-                    (bound_x, bound_y),
-                    (0.0, 0.0),
-                    ruleset.well_size_rows,
-                    ruleset.well_size_cols,
-                    TetrisPos(4, 18),
-                    &mut transform,
-                );
-                transform
-            },
-        ));
+        let sampled = *[TetrominoShape::Arrow, TetrominoShape::Stick]
+            .sample(&mut prng, 1)
+            .next()
+            .unwrap();
 
-        commands.spawn((
-            Current,
-            Block,
-            TetrisPos(5, 18),
-            Mesh3d(block_mesh.clone()),
-            MeshMaterial3d(orange_material.clone()),
-            {
-                let mut transform = Transform::IDENTITY;
-                apply_transform(
-                    (bound_x, bound_y),
-                    (0.0, 0.0),
-                    ruleset.well_size_rows,
-                    ruleset.well_size_cols,
-                    TetrisPos(5, 18),
-                    &mut transform,
-                );
-                transform
-            },
-        ));
+        sampled.spawn_new(&mut commands, block_mesh, block_material, ruleset.as_ref());
 
         gravity_timer.0.reset();
     }

@@ -407,6 +407,11 @@ fn setup_game_area(
         0.1,
     ));
 
+    commands.spawn(DirectionalLight {
+        illuminance: 1000.0,
+        ..default()
+    });
+
     commands.spawn((
         PlayArea,
         Transform::from_xyz(0.0, 0.0, -1.0),
@@ -452,31 +457,31 @@ fn setup_game_area(
     )));
 
     let orange_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        255.0, 165.0, 0.0,
+        1.0, 0.647, 0.0,
     )));
 
     let blue_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        0.0, 0.0, 255.0,
+        0.0, 0.0, 1.0,
     )));
 
     let cyan_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        0.0, 255.0, 255.0,
+        0.0, 1.0, 1.0,
     )));
 
     let green_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        0.0, 255.0, 0.0,
+        0.0, 1.0, 0.0,
     )));
 
     let magenta_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        255.0, 0.0, 255.0,
+        1.0, 0.0, 1.0,
     )));
 
     let red_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        255.0, 0.0, 0.0,
+        1.0, 0.0, 0.0,
     )));
 
     let yellow_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        255.0, 255.0, 0.0,
+        1.0, 1.0, 0.0,
     )));
 
     let materials_map = HashMap::from_iter(

@@ -29,6 +29,9 @@ enum TetrominoShape {
     Arrow,
 }
 
+#[derive(Component)]
+struct CurrentShape(TetrominoShape, u8);
+
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 enum TetrominoColor {
     Orange,
@@ -68,10 +71,10 @@ impl TetrominoShape {
         match self {
             TetrominoShape::Stick => {
                 for (current, pos) in [
-                    (Current(1), TetrisPos(3, 19)),
-                    (Current(2), TetrisPos(4, 19)),
-                    (Current(3), TetrisPos(5, 19)),
-                    (Current(4), TetrisPos(6, 19)),
+                    (Current(1, TetrominoShape::Stick, 0), TetrisPos(3, 19)),
+                    (Current(2, TetrominoShape::Stick, 0), TetrisPos(4, 19)),
+                    (Current(3, TetrominoShape::Stick, 0), TetrisPos(5, 19)),
+                    (Current(4, TetrominoShape::Stick, 0), TetrisPos(6, 19)),
                 ] {
                     commands.spawn((
                         current,
@@ -96,10 +99,10 @@ impl TetrominoShape {
             }
             _ => {
                 for (current, pos) in [
-                    (Current(1), TetrisPos(4, 19)),
-                    (Current(2), TetrisPos(3, 18)),
-                    (Current(3), TetrisPos(4, 18)),
-                    (Current(4), TetrisPos(5, 18)),
+                    (Current(1, TetrominoShape::Arrow, 0), TetrisPos(4, 19)),
+                    (Current(2, TetrominoShape::Arrow, 0), TetrisPos(3, 18)),
+                    (Current(3, TetrominoShape::Arrow, 0), TetrisPos(4, 18)),
+                    (Current(4, TetrominoShape::Arrow, 0), TetrisPos(5, 18)),
                 ] {
                     commands.spawn((
                         current,
@@ -123,6 +126,38 @@ impl TetrominoShape {
                 }
             }
         }
+    }
+
+    fn rotate_map(map: [u8; 16]) -> [u8; 16] {
+        let mut result = [0; 16];
+
+        for row in 0..4 {
+            let target_row = &map[row * 4..row * 4 + 4];
+            let target_column = [3 - row, 7 - row, 11 - row, 15 - row];
+
+            for (val, idx) in target_row
+                .iter()
+                .copied()
+                .zip(target_column.iter().copied())
+            {
+                result[idx] = val;
+            }
+        }
+
+        // rotation can leave empty tailing rows - we always want our tetromino to stick to bottom of the 4x4 grid.
+        let tailing_zero_rows = result
+            .iter()
+            .fold(0usize, |acc, &i| if i != 0 { 0 } else { acc + 1 })
+            / 4;
+
+        for i in (0..16).rev() {
+            if result[i] != 0 {
+                result[i + tailing_zero_rows * 4] = result[i];
+                result[i] = 0;
+            }
+        }
+
+        result
     }
 
     #[rustfmt::skip]
@@ -176,6 +211,9 @@ impl TetrominoShape {
 
 #[derive(Event)]
 struct BlockPlaced;
+
+#[derive(Event)]
+struct RotationRequested;
 
 impl GameState {
     fn new(rows: u32, cols: u32) -> Self {
@@ -259,7 +297,7 @@ struct Block;
 struct TetrisPos(u32, u32);
 
 #[derive(Component)]
-struct Current(u8);
+struct Current(u8, TetrominoShape, u8);
 
 impl TetrisRuleset {
     fn new(well_size_rows: u32, well_size_cols: u32, initial_speed: f32) -> Self {
@@ -477,6 +515,7 @@ fn spawn_new_piece(
 }
 
 fn controls(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
     ruleset: Res<TetrisRuleset>,
     state: Res<GameState>,
@@ -533,6 +572,8 @@ fn controls(
                 }
             }
         }
+    } else if keyboard.just_pressed(KeyCode::KeyW) {
+        commands.trigger(RotationRequested);
     }
 }
 
@@ -582,6 +623,88 @@ fn update_ui(mut pts_text: Query<&mut Text, With<PointsText>>, state: Res<GameSt
     pts_text.0 = format!("Points: {}", state.points);
 }
 
+fn rotate_current(
+    _event: On<RotationRequested>,
+    ruleset: Res<TetrisRuleset>,
+    mut query: Query<(&mut TetrisPos, &mut Transform, &mut Current)>,
+) {
+    let aspect_ratio: f32 = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
+
+    let bound_x = 0.33;
+    let bound_y = 0.33 / aspect_ratio;
+
+    let mut new_positions = HashMap::with_capacity(4);
+    for (tetris_pos, _, current) in query.iter() {
+        let Current(idx, shape, current_rotation) = current;
+
+        let adjustment = match *shape {
+            TetrominoShape::Arrow => {
+                if *current_rotation == 0 {
+                    [(0, -1), (0, 1), (-1, 0), (-2, -1)]
+                } else if *current_rotation == 1 {
+                    [(0, 0), (0, 0), (1, 1), (2, 2)]
+                } else if *current_rotation == 2 {
+                    [(0, 0), (2, 0), (1, -1), (0, -2)]
+                } else {
+                    [(0, 1), (-2, -1), (-1, 0), (0, 1)]
+                }
+            }
+            TetrominoShape::Stick => {
+                if *current_rotation % 2 == 0 {
+                    [(0, 0), (-1, -1), (-2, -2), (-3, -3)]
+                } else {
+                    [(0, 0), (1, 1), (2, 2), (3, 3)]
+                }
+            }
+            _ => {
+                unimplemented!();
+            }
+        }[(*idx - 1) as usize];
+
+        let mut new_tetris_pos = tetris_pos.clone();
+        new_tetris_pos.0 = if adjustment.0 < 0 {
+            new_tetris_pos.0 - (-adjustment.0) as u32
+        } else {
+            new_tetris_pos.0 + adjustment.0 as u32
+        };
+
+        new_tetris_pos.1 = if adjustment.1 < 0 {
+            new_tetris_pos.1 - (-adjustment.1) as u32
+        } else {
+            new_tetris_pos.1 + adjustment.1 as u32
+        };
+
+        if !((0..ruleset.well_size_cols).contains(&new_tetris_pos.0)
+            && (0..ruleset.well_size_rows).contains(&new_tetris_pos.1))
+        {
+            return;
+        } else {
+            new_positions.insert(*idx, new_tetris_pos);
+        }
+    }
+
+    for (mut tetris_pos, mut transform, mut current) in query.iter_mut() {
+        let Current(idx, _, _) = current.as_mut();
+
+        let new_tetris_pos = new_positions.get(idx).unwrap();
+
+        tetris_pos.0 = new_tetris_pos.0;
+        tetris_pos.1 = new_tetris_pos.1;
+
+        apply_transform(
+            (bound_x, bound_y),
+            (0.0, 0.0),
+            ruleset.well_size_rows,
+            ruleset.well_size_cols,
+            *tetris_pos,
+            transform.as_mut(),
+        );
+
+        current.2 += 1;
+        current.2 %= 4;
+    }
+}
+
 fn main() {
     App::new()
         .insert_resource(TetrisRuleset::default())
@@ -593,5 +716,6 @@ fn main() {
             (update_ui, (spawn_new_piece, gravity_system).chain()),
         )
         .add_observer(clear_lines)
+        .add_observer(rotate_current)
         .run();
 }

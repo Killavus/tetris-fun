@@ -225,11 +225,11 @@ impl GameState {
     }
 
     fn place_block(&mut self, pos: TetrisPos) {
-        self.occupied[(pos.1 * self.cols + pos.0) as usize] = 1;
+        self.occupied[(pos.1 as u32 * self.cols + pos.0 as u32) as usize] = 1;
     }
 
     fn colliding(&self, pos: TetrisPos) -> bool {
-        self.occupied[(pos.1 * self.cols + pos.0) as usize] == 1
+        self.occupied[(pos.1 as u32 * self.cols + pos.0 as u32) as usize] == 1
     }
 
     fn full_lines(&self) -> Vec<u32> {
@@ -265,7 +265,7 @@ impl GameState {
     }
 
     fn should_rest(&self, pos: &TetrisPos) -> bool {
-        pos.1 == 0 || self.occupied[(((pos.1 - 1) * self.cols) + pos.0) as usize] == 1
+        pos.1 == 0 || self.occupied[(((pos.1 as u32 - 1) * self.cols) + pos.0 as u32) as usize] == 1
     }
 }
 
@@ -294,7 +294,7 @@ struct PlayArea;
 struct Block;
 
 #[derive(Component, Clone, Copy)]
-struct TetrisPos(u32, u32);
+struct TetrisPos(i32, i32);
 
 #[derive(Component)]
 struct Current(u8, TetrominoShape, u8);
@@ -551,7 +551,7 @@ fn controls(
     } else if keyboard.just_pressed(KeyCode::KeyD) {
         let not_hitting_wall = !query
             .iter()
-            .any(|(pos, _)| pos.0 == ruleset.well_size_cols - 1);
+            .any(|(pos, _)| pos.0 as u32 == ruleset.well_size_cols - 1);
 
         if not_hitting_wall {
             let not_colliding = !query
@@ -590,7 +590,7 @@ fn clear_lines(
     state.points += crash_lines.len() * POINTS_PER_CLEAR;
 
     for (entity, mut pos, mut transform) in tiles.iter_mut() {
-        if crash_lines.contains(&pos.1) {
+        if crash_lines.contains(&(pos.1 as u32)) {
             commands.entity(entity).despawn();
         } else {
             let aspect_ratio = ruleset.well_size_cols as f32 / ruleset.well_size_rows as f32;
@@ -599,7 +599,7 @@ fn clear_lines(
             let bound_y = 0.33 / aspect_ratio;
 
             let y = pos.1;
-            let should_fall = crash_lines.iter().any(|crash_y| *crash_y < y);
+            let should_fall = crash_lines.iter().any(|crash_y| *crash_y < y as u32);
 
             if should_fall {
                 pos.1 = pos.1.saturating_sub(1);
@@ -651,9 +651,9 @@ fn rotate_current(
             }
             TetrominoShape::Stick => {
                 if *current_rotation % 2 == 0 {
-                    [(0, 0), (-1, -1), (-2, -2), (-3, -3)]
+                    [(2, 0), (1, -1), (0, -2), (-1, -3)]
                 } else {
-                    [(0, 0), (1, 1), (2, 2), (3, 3)]
+                    [(-2, 0), (-1, 1), (0, 2), (1, 3)]
                 }
             }
             _ => {
@@ -662,20 +662,11 @@ fn rotate_current(
         }[(*idx - 1) as usize];
 
         let mut new_tetris_pos = tetris_pos.clone();
-        new_tetris_pos.0 = if adjustment.0 < 0 {
-            new_tetris_pos.0 - (-adjustment.0) as u32
-        } else {
-            new_tetris_pos.0 + adjustment.0 as u32
-        };
+        new_tetris_pos.0 += adjustment.0;
+        new_tetris_pos.1 += adjustment.1;
 
-        new_tetris_pos.1 = if adjustment.1 < 0 {
-            new_tetris_pos.1 - (-adjustment.1) as u32
-        } else {
-            new_tetris_pos.1 + adjustment.1 as u32
-        };
-
-        if !((0..ruleset.well_size_cols).contains(&new_tetris_pos.0)
-            && (0..ruleset.well_size_rows).contains(&new_tetris_pos.1))
+        if !((0..ruleset.well_size_cols as i32).contains(&new_tetris_pos.0)
+            && (0..ruleset.well_size_rows as i32).contains(&new_tetris_pos.1))
         {
             return;
         } else {

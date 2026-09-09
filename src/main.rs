@@ -69,6 +69,34 @@ impl TetrominoShape {
         let bound_y = 0.33 / aspect_ratio;
 
         match self {
+            TetrominoShape::Square => {
+                for (current, pos) in [
+                    (Current(1, TetrominoShape::Square, 0), TetrisPos(4, 19)),
+                    (Current(2, TetrominoShape::Square, 0), TetrisPos(5, 19)),
+                    (Current(3, TetrominoShape::Square, 0), TetrisPos(4, 18)),
+                    (Current(4, TetrominoShape::Square, 0), TetrisPos(5, 18)),
+                ] {
+                    commands.spawn((
+                        current,
+                        pos,
+                        Block,
+                        Mesh3d(block_mesh.clone()),
+                        MeshMaterial3d(block_material.clone()),
+                        {
+                            let mut transform = Transform::IDENTITY;
+                            apply_transform(
+                                (bound_x, bound_y),
+                                (0.0, 0.0),
+                                ruleset.well_size_rows,
+                                ruleset.well_size_cols,
+                                pos,
+                                &mut transform,
+                            );
+                            transform
+                        },
+                    ));
+                }
+            }
             TetrominoShape::Stick => {
                 for (current, pos) in [
                     (Current(1, TetrominoShape::Stick, 0), TetrisPos(3, 19)),
@@ -424,26 +452,42 @@ fn setup_game_area(
     )));
 
     let orange_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
-        252.0, 160.0, 2.0,
+        255.0, 165.0, 0.0,
     )));
 
-    TetrominoShape::Arrow.spawn_new(
-        &mut commands,
-        block_mesh.clone(),
-        orange_material.clone(),
-        ruleset.as_ref(),
-    );
+    let blue_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        0.0, 0.0, 255.0,
+    )));
 
-    // todo: define all materials instead of having just one
+    let cyan_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        0.0, 255.0, 255.0,
+    )));
+
+    let green_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        0.0, 255.0, 0.0,
+    )));
+
+    let magenta_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        255.0, 0.0, 255.0,
+    )));
+
+    let red_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        255.0, 0.0, 0.0,
+    )));
+
+    let yellow_material = materials.add(StandardMaterial::from_color(Color::linear_rgb(
+        255.0, 255.0, 0.0,
+    )));
+
     let materials_map = HashMap::from_iter(
         [
-            (TetrominoColor::Blue, orange_material.clone()),
-            (TetrominoColor::Cyan, orange_material.clone()),
-            (TetrominoColor::Green, orange_material.clone()),
-            (TetrominoColor::Magenta, orange_material.clone()),
+            (TetrominoColor::Blue, blue_material.clone()),
+            (TetrominoColor::Cyan, cyan_material.clone()),
+            (TetrominoColor::Green, green_material.clone()),
+            (TetrominoColor::Magenta, magenta_material.clone()),
             (TetrominoColor::Orange, orange_material.clone()),
-            (TetrominoColor::Red, orange_material.clone()),
-            (TetrominoColor::Yellow, orange_material.clone()),
+            (TetrominoColor::Red, red_material.clone()),
+            (TetrominoColor::Yellow, yellow_material.clone()),
         ]
         .into_iter(),
     );
@@ -502,17 +546,25 @@ fn spawn_new_piece(
 ) {
     if query.is_empty() && spawn_timer.0.tick(time.delta()).just_finished() {
         let block_mesh = assets.mesh.clone();
-        let block_material: Handle<StandardMaterial> = assets.get_material(TetrominoShape::Arrow);
         use rand::prelude::*;
 
         let mut prng = rand::rng();
 
-        let sampled = *[TetrominoShape::Arrow, TetrominoShape::Stick]
-            .sample(&mut prng, 1)
-            .next()
-            .unwrap();
+        let sampled = *[
+            TetrominoShape::Arrow,
+            TetrominoShape::Stick,
+            TetrominoShape::Square,
+        ]
+        .sample(&mut prng, 1)
+        .next()
+        .unwrap();
 
-        sampled.spawn_new(&mut commands, block_mesh, block_material, ruleset.as_ref());
+        sampled.spawn_new(
+            &mut commands,
+            block_mesh,
+            assets.get_material(sampled),
+            ruleset.as_ref(),
+        );
 
         gravity_timer.0.reset();
     }
@@ -668,6 +720,7 @@ fn rotate_current(
                     [(-2, 0), (-1, 1), (0, 2), (1, 3)]
                 }
             }
+            TetrominoShape::Square => [(0, 0), (0, 0), (0, 0), (0, 0)],
             _ => {
                 unimplemented!();
             }

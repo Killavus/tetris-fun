@@ -252,7 +252,11 @@ impl GameState {
 
     fn clear_lines(&mut self) {
         let rows = self.occupied.len() as u32 / self.cols;
-        let full_lines = self.full_lines();
+        let full_lines = {
+            let mut full_lines = self.full_lines();
+            full_lines.reverse();
+            full_lines
+        };
 
         for y_line in full_lines {
             for y_up in y_line + 1..rows {
@@ -586,7 +590,12 @@ fn clear_lines(
     mut tiles: Query<(Entity, &mut TetrisPos, &mut Transform), (With<Block>, Without<Current>)>,
     mut commands: Commands,
 ) {
-    let crash_lines = state.full_lines();
+    let crash_lines = {
+        let mut full_lines = state.full_lines();
+        full_lines.reverse();
+        full_lines
+    };
+
     state.points += crash_lines.len() * POINTS_PER_CLEAR;
 
     for (entity, mut pos, mut transform) in tiles.iter_mut() {
@@ -599,10 +608,13 @@ fn clear_lines(
             let bound_y = 0.33 / aspect_ratio;
 
             let y = pos.1;
-            let should_fall = crash_lines.iter().any(|crash_y| *crash_y < y as u32);
+            let should_fall = crash_lines
+                .iter()
+                .filter(|&crash_y| *crash_y < y as u32)
+                .count();
 
-            if should_fall {
-                pos.1 = pos.1.saturating_sub(1);
+            if should_fall > 0 {
+                pos.1 = pos.1.saturating_sub(should_fall as i32);
                 apply_transform(
                     (bound_x, bound_y),
                     (0.0, 0.0),
